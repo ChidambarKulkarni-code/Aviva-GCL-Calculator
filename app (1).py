@@ -4,25 +4,25 @@ import numpy as np
 from pathlib import Path
 from io import BytesIO
 
-# Configuration file location
+# Target the single workbook shown in your directory structure
 RATE_FILE = Path("Main GCL Rates.xlsx")
 
-# Updated Mapping to handle Home Loan & LAP across Single and Joint Lives
+# Fixed structural mapping pointing to the exact tab names inside your master workbook
 PRODUCT_SHEETS = {
-    # --- Home Loan (Single & Joint) ---
+    # --- Home Loan ---
     ("Home Loan", "Single Life", "Level Cover"): "Home Loan Level Cover",
     ("Home Loan", "Single Life", "Reducing Cover"): "Home Loan Reducing Cover",
     ("Home Loan", "Joint Life", "Level Cover"): "Home Loan Joint Level",
     ("Home Loan", "Joint Life", "Reducing Cover"): "Home Loan Joint Reducing",
 
-    # --- Loan Against Property (Single & Joint) ---
+    # --- Loan Against Property (LAP) ---
     ("Loan Against Property", "Single Life", "Level Cover"): "Lap Level Cover",
     ("Loan Against Property", "Single Life", "Reducing Cover"): "Lap Reducing",
     ("Loan Against Property", "Joint Life", "Level Cover"): "Lap Joint Level",
     ("Loan Against Property", "Joint Life", "Reducing Cover"): "Lap Joint Reducing",
 }
 
-# Required columns for the uploaded customer file
+# Required columns for the uploaded customer portfolio file
 REQUIRED_COLUMNS = [
     "Customer Name",
     "Primary Age",
@@ -283,46 +283,65 @@ if uploaded_file is not None:
     st.subheader("Data Input Preview (First 20 Columns)")
     st.dataframe(customer_df.head(20), use_container_width=True)
 
-    # Validate required columns
     missing_cols = [col for col in REQUIRED_COLUMNS if col not in customer_df.columns]
+
     if missing_cols:
-        st.error(f"Missing required columns: {', '.join(missing_cols)}")
-        st.stop()
+        st.error(f"Execution halted. Missing mandatory columns: {', '.join(missing_cols)}")
+    else:
+        st.success("Structure validation passed successfully.")
 
-    st.divider()
-    st.subheader("Premium Computation")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Uploaded Insured Headcount", len(customer_df))
+        c2.metric("Target Segment", product)
+        c3.metric("LOB Structure", f"{life_type} ({cover_type})")
 
-    try:
-        rate_table = load_rate_table(sheet_name)
-    except ValueError as e:
-        st.error(str(e))
-        st.stop()
+        st.divider()
 
-    # Apply premium calculation across all rows
-    results = customer_df.apply(
-        lambda row: calculate_premium(row, rate_table, life_type, joint_factor),
-        axis=1
-    )
-    results.columns = ["Applied Rate (per Lakh)", "Computed Premium (₹)", "Remark"]
+        if st.button("Run Portfolio Premium Calculation", type="primary"):
+            try:
+                rate_table = load_rate_table(sheet_name)
+            except Exception as e:
+                st.error(str(e))
+                st.stop()
 
-    output_df = pd.concat([customer_df, results], axis=1)
+            output_df = customer_df.copy()
 
-    st.dataframe(output_df, use_container_width=True)
+            # Execute underwriting matrix transformation 
+            output_df[[
+                "Rate Per Lakh",
+                "Calculated Premium",
+                "Remarks"
+            ]] = output_df.apply(
+                lambda row: calculate_premium(row, rate_table, life_type, joint_factor),
+                axis=1
+            )
 
-    # Summary metrics
-    valid_premiums = output_df["Computed Premium (₹)"].dropna()
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Records", len(output_df))
-    col2.metric("Successfully Computed", len(valid_premiums))
-    col3.metric("Total Premium (₹)", f"₹{valid_premiums.sum():,.2f}")
+            total_records = len(output_df)
+            calculated_records = (output_df["Remarks"].str.contains("Calculated", na=False)).sum()
+            failed_records = total_records - calculated_records
+            total_premium = output_df["Calculated Premium"].sum(skipna=True)
 
-    st.divider()
+            st.success("Calculations complete.")
 
-    # Download button
-    excel_data = convert_df_to_excel(output_df)
-    st.download_button(
-        label="📥 Download Premium Output (.xlsx)",
-        data=excel_data,
-        file_name="Aviva_GCL_Premium_Output.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Rows", total_records)
+            m2.metric("Passed Items", calculated_records)
+            m3.metric("Failed Exceptions", failed_records)
+            m4.metric("GWP Premium Portfolio Total", f"₹{total_premium:,.2f}")
+
+            st.divider()
+            st.subheader("Calculated Premium Matrix Output")
+            st.dataframe(output_df, use_container_width=True)
+
+            if failed_records > 0:
+                st.warning("Exceptions flagged. Verify age boundaries or tenure constraints in failed rows.")
+
+            excel_file = convert_df_to_excel(output_df)
+            st.download_button(
+                label="Download Calculated Premium Excel",
+                data=excel_file,
+                file_name=f"aviva_gcl_premium_{product.lower().replace(' ', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+else:
+    st.info("Awaiting file upload profile parameters to generate rates.")
