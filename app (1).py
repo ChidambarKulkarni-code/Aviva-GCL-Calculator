@@ -164,4 +164,100 @@ def read_uploaded_file(uploaded_file):
 st.sidebar.title("Aviva Underwriting Controls")
 
 product = st.sidebar.selectbox("Select Product Type", ["Home Loan", "Loan Against Property"])
-life_type = st.sidebar.selectbox("Select Structure",
+life_type = st.sidebar.selectbox("Select Structure", ["Single Life", "Joint Life"])
+cover_type = st.sidebar.selectbox("Select Cover Type", ["Level Cover", "Reducing Cover"])
+
+# Dynamically extract correct file pointer based on structure selection
+active_file = PRODUCT_CONFIG[product][life_type]["file"]
+sheet_name = COVER_SHEET_MAP.get((product, life_type, cover_type))
+
+# File Availability Verification Guardrail
+if not active_file.exists():
+    st.error(
+        f"Critical Error: Missing file dependency. Please verify **{active_file.name}** is placed in your project root."
+    )
+    st.stop()
+
+if sheet_name:
+    st.sidebar.success(f"Routing to: {active_file.name}")
+    st.sidebar.text(f"Target Sheet: {sheet_name}")
+else:
+    st.sidebar.error("Selected UI configuration mapping error.")
+    st.stop()
+
+
+# --------------------------------------------------
+# Main Layout UI
+# --------------------------------------------------
+left_col, right_col = st.columns([2, 1])
+
+with left_col:
+    st.subheader("Upload Customer Portfolio File")
+    uploaded_file = st.file_uploader("Supported formats: .xlsx, .xls, .csv", type=["xlsx", "xls", "csv"])
+
+with right_col:
+    st.subheader("Required Portfolio Format")
+    for col in REQUIRED_COLUMNS:
+        st.markdown(f"- `{col}`")
+
+# --------------------------------------------------
+# Calculation Engine Execution Loop
+# --------------------------------------------------
+if uploaded_file is not None:
+    try:
+        customer_df = read_uploaded_file(uploaded_file)
+    except Exception as e:
+        st.error(f"Error reading file format: {e}")
+        st.stop()
+
+    st.divider()
+    missing_cols = [col for col in REQUIRED_COLUMNS if col not in customer_df.columns]
+
+    if missing_cols:
+        st.error(f"Missing mandatory columns: {', '.join(missing_cols)}")
+    else:
+        st.success("File format validation passed.")
+
+        if st.button("Run Portfolio Premium Calculation", type="primary"):
+            try:
+                rate_table = load_rate_table(active_file, sheet_name)
+            except Exception as e:
+                st.error(str(e))
+                st.stop()
+
+            output_df = customer_df.copy()
+
+            output_df[[
+                "Rate Per Lakh",
+                "Calculated Premium",
+                "Remarks"
+            ]] = output_df.apply(
+                lambda row: calculate_premium(row, rate_table, life_type),
+                axis=1
+            )
+
+            total_records = len(output_df)
+            calculated_records = (output_df["Remarks"].str.contains("Calculated", na=False)).sum()
+            failed_records = total_records - calculated_records
+            total_premium = output_df["Calculated Premium"].sum(skipna=True)
+
+            st.success("Calculations complete.")
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Total Rows", total_records)
+            m2.metric("Passed Items", calculated_records)
+            m3.metric("Failed Exceptions", failed_records)
+            m4.metric("Total Portfolio Premium", f"₹{total_premium:,.2f}")
+
+            st.divider()
+            st.dataframe(output_df, use_container_width=True)
+
+            excel_file = convert_df_to_excel(output_df)
+            st.download_button(
+                label="Download Calculated Premium Excel",
+                data=excel_file,
+                file_name=f"aviva_gcl_output_{product.lower().replace(' ', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+else:
+    st.info("Awaiting file upload profile parameters to generate rates.")
