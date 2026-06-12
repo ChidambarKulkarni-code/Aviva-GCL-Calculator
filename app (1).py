@@ -1,4 +1,3 @@
-python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -36,10 +35,11 @@ COVER_SHEET_MAP = {
     ("Loan Against Property", "Joint Life", "Reducing Cover"): "Lap Joint Reducing",
 }
 
+# MATCHED TO YOUR UPLOAD FILE HEADERS
 REQUIRED_COLUMNS = [
     "Customer Name",
-    "Primary Age",
-    "Secondary Age",      # Required, but can be blank/0 if Single Life
+    "Age",                # Fixed from 'Primary Age' to match your sheet
+    "Joint Age",          # Required for Joint Life, can be blank/0 for Single
     "Loan Amount",
     "Tenure Months"
 ]
@@ -126,7 +126,7 @@ def get_rate(rate_table, age, tenure):
 
 def calculate_premium(row, rate_table, life_type):
     try:
-        age_1 = int(row["Primary Age"])
+        age_1 = int(row["Age"]) # Fixed column name mapping here
         loan_amount = float(row["Loan Amount"])
         tenure = int(row["Tenure Months"])
     except Exception:
@@ -135,7 +135,7 @@ def calculate_premium(row, rate_table, life_type):
     # Look up rate from active table
     rate_1, remark_1 = get_rate(rate_table, age_1, tenure)
     if rate_1 is None:
-        return pd.Series([np.nan, np.nan, f"Primary Lookup: {remark_1}"])
+        return pd.Series([np.nan, np.nan, f"Age Lookup: {remark_1}"])
 
     final_rate = rate_1
     remark = "Calculated (Joint Sheet)" if life_type == "Joint Life" else "Calculated"
