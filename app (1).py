@@ -35,11 +35,9 @@ COVER_SHEET_MAP = {
     ("Loan Against Property", "Joint Life", "Reducing Cover"): "Lap Joint Reducing",
 }
 
-# MATCHED TO YOUR UPLOAD FILE HEADERS
+# STRICT MANDATORY COLUMNS FOR CALCULATION
 REQUIRED_COLUMNS = [
-    "Customer Name",
-    "Age",                # Fixed from 'Primary Age' to match your sheet
-    "Joint Age",          # Required for Joint Life, can be blank/0 for Single
+    "Age",
     "Loan Amount",
     "Tenure Months"
 ]
@@ -126,7 +124,7 @@ def get_rate(rate_table, age, tenure):
 
 def calculate_premium(row, rate_table, life_type):
     try:
-        age_1 = int(row["Age"]) # Fixed column name mapping here
+        age_1 = int(row["Age"])
         loan_amount = float(row["Loan Amount"])
         tenure = int(row["Tenure Months"])
     except Exception:
@@ -200,6 +198,7 @@ with right_col:
     st.subheader("Required Portfolio Format")
     for col in REQUIRED_COLUMNS:
         st.markdown(f"- `{col}`")
+    st.info("Optional columns like 'Customer Name' or secondary borrower information can be added without issues.")
 
 # --------------------------------------------------
 # Calculation Engine Execution Loop
@@ -215,7 +214,7 @@ if uploaded_file is not None:
     missing_cols = [col for col in REQUIRED_COLUMNS if col not in customer_df.columns]
 
     if missing_cols:
-        st.error(f"Missing mandatory columns: {', '.join(missing_cols)}")
+        st.error(f"Execution halted. Missing mandatory columns: {', '.join(missing_cols)}")
     else:
         st.success("File format validation passed.")
 
