@@ -4,25 +4,34 @@ import numpy as np
 from pathlib import Path
 from io import BytesIO
 
-# Target the single workbook shown in your directory structure
-RATE_FILE = Path("Main GCL Rates.xlsx")
+# --------------------------------------------------
+# Define paths for BOTH Excel files
+# --------------------------------------------------
+HOME_LOAN_FILE = Path("Main GCL rates.xlsx")  # Adjust this if your HL file has a different name
+LAP_FILE = Path("LAP_GCL_Rates.xlsx")          # Put your exact LAP file name here
 
-# Fixed structural mapping pointing to the exact tab names inside your master workbook
-PRODUCT_SHEETS = {
-    # --- Home Loan ---
-    ("Home Loan", "Single Life", "Level Cover"): "Home Loan Level Cover",
-    ("Home Loan", "Single Life", "Reducing Cover"): "Home Loan Reducing Cover",
-    ("Home Loan", "Joint Life", "Level Cover"): "Home Loan Joint Level",
-    ("Home Loan", "Joint Life", "Reducing Cover"): "Home Loan Joint Reducing",
-
-    # --- Loan Against Property (LAP) ---
-    ("Loan Against Property", "Single Life", "Level Cover"): "Lap Level Cover",
-    ("Loan Against Property", "Single Life", "Reducing Cover"): "Lap Reducing",
-    ("Loan Against Property", "Joint Life", "Level Cover"): "Lap Joint Level",
-    ("Loan Against Property", "Joint Life", "Reducing Cover"): "Lap Joint Reducing",
+# Centralized configuration mapping products to their respective files and tabs
+PRODUCT_CONFIG = {
+    "Home Loan": {
+        "file": HOME_LOAN_FILE,
+        "sheets": {
+            ("Single Life", "Level Cover"): "Home Loan Level Cover",
+            ("Single Life", "Reducing Cover"): "Home Loan Reducing Cover",
+            ("Joint Life", "Level Cover"): "Home Loan Joint Level",
+            ("Joint Life", "Reducing Cover"): "Home Loan Joint Reducing",
+        }
+    },
+    "Loan Against Property": {
+        "file": LAP_FILE,
+        "sheets": {
+            ("Single Life", "Level Cover"): "Lap Level Cover",
+            ("Single Life", "Reducing Cover"): "Lap Reducing",
+            ("Joint Life", "Level Cover"): "Lap Joint Level",
+            ("Joint Life", "Reducing Cover"): "Lap Joint Reducing",
+        }
+    }
 }
 
-# Required columns for the uploaded customer portfolio file
 REQUIRED_COLUMNS = [
     "Customer Name",
     "Primary Age",
@@ -40,12 +49,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --------------------------------------------------
-# Header
-# --------------------------------------------------
 st.title("Aviva Group Credit Life (GCL) Premium Calculator")
 st.caption(
-    "A portfolio-level automated premium computation engine for Single and Joint Life credit insurance coverage."
+    "A multi-file portfolio premium computation engine for Single and Joint Life credit insurance coverage."
 )
 
 st.divider()
@@ -54,22 +60,22 @@ st.divider()
 # Helper Functions
 # --------------------------------------------------
 @st.cache_data
-def load_rate_table(sheet_name):
+def load_rate_table(file_path, sheet_name):
     try:
         raw = pd.read_excel(
-            RATE_FILE,
+            file_path,
             sheet_name=sheet_name,
             header=None
         )
     except Exception as e:
-        raise ValueError(f"Sheet '{sheet_name}' not found in Excel workbook: {e}")
+        raise ValueError(f"Sheet '{sheet_name}' not found in {file_path.name}: {e}")
 
     header_matches = raw[
         raw.iloc[:, 0].astype(str).str.strip().eq("Entry Age")
     ].index
 
     if len(header_matches) == 0:
-        raise ValueError(f"'Entry Age' header row not found in sheet: {sheet_name}")
+        raise ValueError(f"'Entry Age' header row not found in sheet '{sheet_name}' inside {file_path.name}")
 
     header_row = header_matches[0]
 
@@ -143,7 +149,7 @@ def get_rate(rate_table, age, tenure):
     return float(rate), "Rate found"
 
 
-def calculate_premium(row, rate_table, life_type, joint_factor=1.7):
+def calculate_premium(row, rate_table, life_type, sheet_name, joint_factor=1.7):
     try:
         age_1 = int(row["Primary Age"])
         loan_amount = float(row["Loan Amount"])
@@ -201,15 +207,6 @@ def read_uploaded_file(uploaded_file):
 
 
 # --------------------------------------------------
-# Rate file verification guard rail
-# --------------------------------------------------
-if not RATE_FILE.exists():
-    st.error(
-        f"Critical Error: Base rate file missing. Place **Main GCL Rates.xlsx** in the root folder."
-    )
-    st.stop()
-
-# --------------------------------------------------
 # Sidebar Configurations
 # --------------------------------------------------
 st.sidebar.title("Aviva Underwriting Controls")
@@ -229,23 +226,32 @@ cover_type = st.sidebar.selectbox(
     ["Level Cover", "Reducing Cover"]
 )
 
+# Route execution parameters to the chosen file and target sheet
+active_file = PRODUCT_CONFIG[product]["file"]
+sheet_name = PRODUCT_CONFIG[product]["sheets"].get((life_type, cover_type))
+
+# Dynamic File-Availability Guardrail
+if not active_file.exists():
+    st.error(
+        f"Critical Error: Base rate file missing. Please ensure **{active_file.name}** is placed in the root folder."
+    )
+    st.stop()
+
+if sheet_name:
+    st.sidebar.success(f"Linked File: {active_file.name}")
+    st.sidebar.text(f"Active Tab: {sheet_name}")
+else:
+    st.sidebar.error("Selected matrix pairing is not mapped.")
+    st.stop()
+
 # Multiplier option if computing Joint risk using custom single rate factor formulas
 joint_factor = 1.7
-if life_type == "Joint Life":
+if life_type == "Joint Life" and "Joint" not in sheet_name:
     joint_factor = st.sidebar.slider(
         "Joint Life Multiplier Factor", 
         min_value=1.0, max_value=2.0, value=1.7, step=0.05,
         help="Adjusts premium scale if using standard single-sheet calculations for dual covers."
     )
-
-# Get sheet mapping target
-sheet_name = PRODUCT_SHEETS.get((product, life_type, cover_type))
-
-if sheet_name:
-    st.sidebar.success(f"Linked Sheet: {sheet_name}")
-else:
-    st.sidebar.error("Selected matrix pairing is not mapped.")
-    st.stop()
 
 
 # --------------------------------------------------
@@ -299,7 +305,7 @@ if uploaded_file is not None:
 
         if st.button("Run Portfolio Premium Calculation", type="primary"):
             try:
-                rate_table = load_rate_table(sheet_name)
+                rate_table = load_rate_table(active_file, sheet_name)
             except Exception as e:
                 st.error(str(e))
                 st.stop()
@@ -312,7 +318,7 @@ if uploaded_file is not None:
                 "Calculated Premium",
                 "Remarks"
             ]] = output_df.apply(
-                lambda row: calculate_premium(row, rate_table, life_type, joint_factor),
+                lambda row: calculate_premium(row, rate_table, life_type, sheet_name, joint_factor),
                 axis=1
             )
 
